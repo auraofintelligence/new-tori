@@ -31,22 +31,32 @@
 <div class="credit">Tip: use the GUI (top-right) to tweak rings, patterns, and recording.</div>
 <div id="err"></div>
 
-<!-- Classic UMD scripts (no ESM) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
+<!-- ES Modules with import map -->
+<script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.js"
+  }
+}
+</script>
 
-<script>
-(function(){
+<script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import GUI from 'lil-gui';
+
   const showErr = (e)=>{ const box=document.getElementById('err'); box.style.display='block'; box.textContent=String(e); console.error(e); };
   window.addEventListener('error', ev=>showErr(ev.message));
-  try{
-    const canvas = document.getElementById('renderer');
+
+  const canvas = document.getElementById('renderer');
     const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:true});
     const resize = ()=>{ const h=window.innerHeight-42; renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(window.innerWidth, h); camera.aspect = renderer.domElement.clientWidth/renderer.domElement.clientHeight; camera.updateProjectionMatrix(); };
     const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b0f16);
     const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 200); camera.position.set(0.8,0.65,2.4); scene.add(camera);
-    const controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping=true;
+    const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping=true;
 
     scene.add(new THREE.HemisphereLight(0xdfeaff,0x0b1020,0.8));
     const key = new THREE.DirectionalLight(0xffffff,1.0); key.position.set(2,2,2); scene.add(key);
@@ -114,7 +124,7 @@
     rebuild();
 
     // GUI
-    const gui = new lil.GUI({title:'Controls', width:320});
+    const gui = new GUI({title:'Controls', width:320});
     const g1=gui.addFolder('Geometry');
     g1.add(state,'rings',1,12,1).onFinishChange(()=>{log('toggle.change',{name:'rings',value:state.rings});rebuild();});
     g1.add(state,'R0',.2,1.2,.01).name('Major R start').onFinishChange(rebuild);
@@ -174,8 +184,6 @@
       requestAnimationFrame(tick);
     }
     window.addEventListener('resize', resize); resize(); tick();
-  }catch(e){ showErr(e); }
-})();
 </script>
 </body>
 </html>

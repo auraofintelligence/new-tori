@@ -205,16 +205,16 @@ buildWorld();
 // ------------------------------ GUI ------------------------------
 const gui = new GUI({title:'Controls', width: 320});
 const fGeo = gui.addFolder('Geometry');
-fGeo.add(state, 'rings', 1, 12, 1).name('Ring count').onChange(()=>{log('toggle.change',{name:'rings',value:state.rings}); buildWorld();});
-fGeo.add(state, 'R0', 0.2, 1.2, 0.01).name('Major R start').onFinishChange(buildWorld);
-fGeo.add(state, 'ringStep', -0.1, 0.12, 0.002).name('R step').onFinishChange(buildWorld);
-fGeo.add(state, 'r0', 0.05, 0.35, 0.005).name('Minor r start').onFinishChange(buildWorld);
-fGeo.add(state, 'tubeStep', -0.03, 0.03, 0.001).name('r step').onFinishChange(buildWorld);
-fGeo.add(state, 'nU', 24, 256, 1).name('Segments U').onFinishChange(buildWorld);
-fGeo.add(state, 'nV', 8, 96, 1).name('Segments V').onFinishChange(buildWorld);
-fGeo.add(state, 'facetW', 0.02, 0.2, 0.001).name('Facet W').onFinishChange(buildWorld);
-fGeo.add(state, 'facetH', 0.015, 0.2, 0.001).name('Facet H').onFinishChange(buildWorld);
-fGeo.add(state, 'facetT', 0.004, 0.05, 0.001).name('Facet T').onFinishChange(buildWorld);
+fGeo.add(state, 'rings', 1, 12, 1).name('Ring count').onFinishChange(()=>{log('toggle.change',{name:'rings',value:state.rings}); buildWorld();});
+fGeo.add(state, 'R0', 0.2, 1.2, 0.01).name('Major R start').onFinishChange(()=>{log('toggle.change',{name:'R0',value:state.R0}); buildWorld()});
+fGeo.add(state, 'ringStep', -0.1, 0.12, 0.002).name('R step').onFinishChange(()=>{log('toggle.change',{name:'ringStep',value:state.ringStep}); buildWorld()});
+fGeo.add(state, 'r0', 0.05, 0.35, 0.005).name('Minor r start').onFinishChange(()=>{log('toggle.change',{name:'r0',value:state.r0}); buildWorld()});
+fGeo.add(state, 'tubeStep', -0.03, 0.03, 0.001).name('r step').onFinishChange(()=>{log('toggle.change',{name:'tubeStep',value:state.tubeStep}); buildWorld()});
+fGeo.add(state, 'nU', 24, 256, 1).name('Segments U').onFinishChange(()=>{log('toggle.change',{name:'nU',value:state.nU}); buildWorld()});
+fGeo.add(state, 'nV', 8, 96, 1).name('Segments V').onFinishChange(()=>{log('toggle.change',{name:'nV',value:state.nV}); buildWorld()});
+fGeo.add(state, 'facetW', 0.02, 0.2, 0.001).name('Facet W').onFinishChange(()=>{log('toggle.change',{name:'facetW',value:state.facetW}); buildWorld()});
+fGeo.add(state, 'facetH', 0.015, 0.2, 0.001).name('Facet H').onFinishChange(()=>{log('toggle.change',{name:'facetH',value:state.facetH}); buildWorld()});
+fGeo.add(state, 'facetT', 0.004, 0.05, 0.001).name('Facet T').onFinishChange(()=>{log('toggle.change',{name:'facetT',value:state.facetT}); buildWorld()});
 
 const fAnim = gui.addFolder('Animation');
 fAnim.add(state, 'animate').name('Run');

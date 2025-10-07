@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Aura Torus Sandbox — HTML Demo</title>
+<style>
+  html,body{height:100%;margin:0;background:#0b0f16;color:#e7ecf4;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+  #app{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}
+  header{padding:.6rem 1rem;display:flex;gap:1rem;align-items:center;border-bottom:1px solid #1b2636;background:linear-gradient(180deg,#0f1522,#0b0f16)}
+  header h1{font-size:1rem;margin:0;letter-spacing:.4px;font-weight:600;opacity:.9}
+  header .btn{background:#122033;border:1px solid #1b2b44;border-radius:10px;color:#dfe8fb;padding:.45rem .7rem;font-size:.85rem;cursor:pointer}
+  header .btn:hover{background:#142844}
+  #renderer{width:100%;height:100%;display:block}
+  #fps{position:fixed;right:.7rem;top:.5rem;color:#8fb7ff;font-size:.8rem;opacity:.8}
+  .badge{padding:.2rem .5rem;border:1px solid #21324c;border-radius:999px;background:#0e1a2a;margin-left:.4rem}
+  .credit{position:fixed;bottom:.4rem;left:.6rem;font-size:.78rem;opacity:.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Aura Torus Sandbox <span class="badge">HTML · Three.js</span></h1>
+    <button id="btnShot" class="btn">📷 Screenshot</button>
+    <button id="btnExport" class="btn">⬇️ Export Events (NDJSON)</button>
+    <button id="btnReset" class="btn">↺ Reset</button>
+    <div id="fps"></div>
+  </header>
+  <canvas id="renderer"></canvas>
+</div>
+<div class="credit">Tip: use the GUI (top-right) to tweak rings, patterns, and recording.</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+const canvas = document.getElementById('renderer');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight-42); // leave room for header
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f16);
+
+const camera = new THREE.PerspectiveCamera(55, canvas.clientWidth/canvas.clientHeight, 0.01, 200);
+camera.position.set(0.8, 0.65, 2.4);
+scene.add(camera);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Lights
+const hemi = new THREE.HemisphereLight(0xdfeaff, 0x0b1020, 0.8);
+scene.add(hemi);
+const key = new THREE.DirectionalLight(0xffffff, 1.0);
+key.position.set(2,2,2);
+scene.add(key);
+
+// ------------------------------ Event log ------------------------------
+const SessionId = Math.random().toString(36).slice(2);
+const events = [];
+const now = ()=> performance.now()/1000;
+const log = (type, payload={}) => {
+  events.push({ts: now(), sid: SessionId, type, payload});
+};
+log('session.start', {ua:navigator.userAgent, w:innerWidth, h:innerHeight});
+
+// ------------------------------ Torus Ring ------------------------------
+class TorusRing {
+  constructor(options){
+    this.opts = structuredClone(options);
+    this.group = new THREE.Group();
+    this.group.userData.ringId = options.ringId;
+    scene.add(this.group);
+
+    // facet geometry: a thin box as the panel (can be swapped to trapezoid)
+    this.facetGeom = new THREE.BoxGeometry( options.facetW, options.facetH, options.facetT );
+    this.material = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: .3, metalness: .1, emissive: 0x000000
+    });
+
+    const count = options.nU * options.nV;
+    this.inst = new THREE.InstancedMesh(this.facetGeom, this.material, count);
+    this.inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (this.inst.setColorAt) this.inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count*3), 3);
+
+    this.group.add(this.inst);
+
+    // precompute UV-phase + ids
+    const phases = new Float32Array(count);
+    let i=0;
+    for(let iu=0; iu<options.nU; iu++){
+      for(let iv=0; iv<options.nV; iv++){
+        const u = iu / options.nU;            // 0..1 around major
+        const v = iv / options.nV;            // 0..1 around minor
+        phases[i++] = (u + v*0.37);
+      }
+    }
+    this.phases = phases;
+    this.updateMatrices(0, /*force*/true);
+    log('ring.add', {ring_id: options.ringId, R: options.R, r: options.r, nU: options.nU, nV: options.nV});
+  }
+
+  // Torus parametric frame
+  frame(u, v, R, r){
+    const U = u*2*Math.PI, V = v*2*Math.PI;
+    const cu=Math.cos(U), su=Math.sin(U), cv=Math.cos(V), sv=Math.sin(V);
+    const x = (R + r*cv) * cu;
+    const y = (R + r*cv) * su;
+    const z = r*sv;
+    // normals (pointing outwards from torus surface)
+    const nx = cu*cv, ny = su*cv, nz = sv;
+    // tangent (major)
+    const tx = -su, ty = cu, tz = 0;
+    return {pos:new THREE.Vector3(x,y,z), n:new THREE.Vector3(nx,ny,nz).normalize(), t:new THREE.Vector3(tx,ty,tz).normalize()};
+  }
+
+  chakraColor(id){ // 0..6 red→violet
+    const lut = [0xff3b30,0xff9f0a,0xffd60a,0x34c759,0x0a84ff,0x5e5ce6,0xbf5af2];
+    return new THREE.Color(lut[Math.max(0,Math.min(6,id))]);
+  }
+
+  updateMatrices(t, force=false){
+    const o = this.opts;
+    const _m = new THREE.Matrix4();
+    const _q = new THREE.Quaternion();
+    const _s = new THREE.Vector3(1-o.gap,1-o.gap,1-o.gap);
+    const ringColor = this.chakraColor(o.ringId);
+
+    let i=0;
+    for(let iu=0; iu<o.nU; iu++){
+      for(let iv=0; iv<o.nV; iv++){
+        const u = iu/o.nU, v = iv/o.nV;
+        const {pos, n, t:tan} = this.frame(u, v, o.R, o.r);
+
+        // spin axis = surface normal
+        const mask = 0.5 + 0.5*Math.sin((t*o.waveSpeed) + (this.phases[i]*o.phaseScale) + o.phaseOffset);
+        const pop  = o.popAmt * (o.popMode==='band' ? bandMask(u, o.bandU, o.bandWidth) : 1) * mask;
+        const spin = THREE.MathUtils.degToRad(o.spinDeg) * mask * (o.altRows && (iv%2) ? -1 : 1);
+
+        const center = pos.clone().addScaledVector(n, pop);
+        const binorm = new THREE.Vector3().crossVectors(n, tan).normalize();
+        _q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(tan, binorm, n));
+        _m.compose(center, _q.multiply(new THREE.Quaternion().setFromAxisAngle(n, spin)), _s);
+        this.inst.setMatrixAt(i, _m);
+
+        if (this.inst.instanceColor) {
+          // emissive-ish color: base chakra hue + brightness by mask
+          const c = ringColor.clone().lerp(new THREE.Color(0xffffff), 0.12);
+          c.offsetHSL(0, 0, (mask-0.5)*0.18);
+          this.inst.setColorAt(i, c);
+        }
+        i++;
+      }
+    }
+    this.inst.instanceMatrix.needsUpdate = true;
+    if (this.inst.instanceColor) this.inst.instanceColor.needsUpdate = true;
+
+    function bandMask(u, center, width){
+      let d = Math.abs(((u-center+1)%1)-0.5)-0.5; // wrap-around distance
+      return THREE.MathUtils.smoothstep(0, width*0.5, width*0.5 - Math.abs(d));
+    }
+  }
+}
+
+// ------------------------------ World setup ------------------------------
+const state = {
+  rings: 7,
+  R0: 0.62, r0: 0.15, ringStep: 0.06, tubeStep: -0.004,
+  nU: 96, nV: 24,
+  facetW: 0.07, facetH: 0.04, facetT: 0.012,
+  popAmt: 0.025, spinDeg: 24, gap: 0.06,
+  waveSpeed: 1.1, phaseScale: 9.0, phaseOffset: 0.0,
+  pattern: 'free',    // 'free' | 'band'
+  bandU: 0.0, bandWidth: 0.14,
+  altRows: true,
+  animate: true,
+  record: false,
+};
+
+const ringObjs = [];
+function buildWorld(){
+  // clear
+  ringObjs.forEach(r => scene.remove(r.group));
+  ringObjs.length = 0;
+
+  for (let k=0;k<state.rings;k++){
+    const R = state.R0 + k*state.ringStep;
+    const r = Math.max(0.05, state.r0 + k*state.tubeStep);
+    const tor = new TorusRing({
+      ringId: k,
+      R, r,
+      nU: state.nU, nV: state.nV,
+      facetW: state.facetW, facetH: state.facetH, facetT: state.facetT,
+      popAmt: state.popAmt, spinDeg: state.spinDeg, gap: state.gap,
+      waveSpeed: state.waveSpeed, phaseScale: state.phaseScale, phaseOffset: state.phaseOffset,
+      bandU: state.bandU, bandWidth: state.bandWidth, popMode: state.pattern, altRows: state.altRows
+    });
+    ringObjs.push(tor);
+  }
+}
+buildWorld();
+
+// ------------------------------ GUI ------------------------------
+const gui = new GUI({title:'Controls', width: 320});
+const fGeo = gui.addFolder('Geometry');
+fGeo.add(state, 'rings', 1, 12, 1).name('Ring count').onChange(()=>{log('toggle.change',{name:'rings',value:state.rings}); buildWorld();});
+fGeo.add(state, 'R0', 0.2, 1.2, 0.01).name('Major R start').onFinishChange(buildWorld);
+fGeo.add(state, 'ringStep', -0.1, 0.12, 0.002).name('R step').onFinishChange(buildWorld);
+fGeo.add(state, 'r0', 0.05, 0.35, 0.005).name('Minor r start').onFinishChange(buildWorld);
+fGeo.add(state, 'tubeStep', -0.03, 0.03, 0.001).name('r step').onFinishChange(buildWorld);
+fGeo.add(state, 'nU', 24, 256, 1).name('Segments U').onFinishChange(buildWorld);
+fGeo.add(state, 'nV', 8, 96, 1).name('Segments V').onFinishChange(buildWorld);
+fGeo.add(state, 'facetW', 0.02, 0.2, 0.001).name('Facet W').onFinishChange(buildWorld);
+fGeo.add(state, 'facetH', 0.015, 0.2, 0.001).name('Facet H').onFinishChange(buildWorld);
+fGeo.add(state, 'facetT', 0.004, 0.05, 0.001).name('Facet T').onFinishChange(buildWorld);
+
+const fAnim = gui.addFolder('Animation');
+fAnim.add(state, 'animate').name('Run');
+fAnim.add(state, 'popAmt', 0.0, 0.08, 0.001).name('Pop (disconnect)').onChange(v=>{log('toggle.change',{name:'popAmt',value:v});});
+fAnim.add(state, 'spinDeg', 0, 90, 1).name('Spin (deg)');
+fAnim.add(state, 'gap', 0, 0.18, 0.001).name('Facet gap').onFinishChange(buildWorld);
+fAnim.add(state, 'waveSpeed', 0.0, 4.0, 0.01).name('Wave speed');
+fAnim.add(state, 'phaseScale', 0.0, 16.0, 0.1).name('Phase scale');
+fAnim.add(state, 'phaseOffset', -6.28, 6.28, 0.01).name('Phase offset');
+fAnim.add(state, 'altRows').name('Alternate rows');
+
+const fPattern = gui.addFolder('Pattern');
+fPattern.add(state, 'pattern', ['free','band']).name('Mode').onChange(v=>log('toggle.change',{name:'pattern',value:v}));
+fPattern.add(state, 'bandU', 0,1,0.001).name('Band U');
+fPattern.add(state, 'bandWidth', 0.02, 0.5, 0.002).name('Band width');
+
+const fRec = gui.addFolder('Capture');
+fRec.add(state, 'record').name('Record events');
+
+gui.close();
+
+// ------------------------------ Resize ------------------------------
+addEventListener('resize', ()=>{
+  renderer.setSize(innerWidth, innerHeight-42);
+  camera.aspect = renderer.domElement.clientWidth / renderer.domElement.clientHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ------------------------------ Buttons ------------------------------
+document.getElementById('btnShot').onclick = ()=>{
+  const url = renderer.domElement.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url; a.download = `aura_torus_${Date.now()}.png`; a.click();
+  log('capture.frame', {w:renderer.domElement.width, h:renderer.domElement.height});
+};
+document.getElementById('btnExport').onclick = ()=>{
+  const blob = new Blob(events.map(e=>JSON.stringify(e)+'\n'), {type:'application/x-ndjson'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `events_${SessionId}.ndjson`; a.click();
+};
+document.getElementById('btnReset').onclick = ()=>{
+  Object.assign(state, {popAmt:0.025, spinDeg:24, waveSpeed:1.1, phaseScale:9, phaseOffset:0, pattern:'free', bandU:0.0});
+  gui.controllersRecursive().forEach(c=>c.updateDisplay());
+  log('toggle.change', {name:'reset', value:true});
+};
+
+// ------------------------------ Loop ------------------------------
+let lastT = now(), frame=0;
+function tick(){
+  const t = now();
+  const dt = t - lastT; lastT = t;
+
+  if (state.animate){
+    for(const r of ringObjs){
+      // push updated opts each frame (cheap shallow merge)
+      Object.assign(r.opts, {
+        popAmt: state.popAmt, spinDeg: state.spinDeg, gap: state.gap,
+        waveSpeed: state.waveSpeed, phaseScale: state.phaseScale, phaseOffset: state.phaseOffset,
+        bandU: state.bandU, bandWidth: state.bandWidth, popMode: state.pattern, altRows: state.altRows
+      });
+      r.updateMatrices(t);
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  if ((frame++ & 15)===0){ // ~4x/sec fps readout
+    document.getElementById('fps').textContent = `${(1/dt|0)} fps`;
+  }
+  if (state.record && (frame%30===0)){ // light event sampling
+    log('sample', {cam:{pos:camera.position.toArray(), target:controls.target.toArray()},
+                   params:{popAmt:state.popAmt, spinDeg:state.spinDeg, waveSpeed:state.waveSpeed, pattern:state.pattern}});
+  }
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>
